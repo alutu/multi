@@ -38,10 +38,13 @@ extern int32_t multi_link_filter(uint32_t seq, mnl_cb_t cb, void *arg);
 
 /* Add/delete ip rule */
 static int32_t multi_link_modify_rule(uint32_t msg_type, uint32_t flags, 
-        uint32_t table_id, struct multi_link_info *li){
+        uint32_t table_id, struct multi_link_info *li, uint8_t addr_len,
+        uint8_t dir, uint32_t prio, const char *ifname){
     uint8_t buf[MNL_SOCKET_BUFFER_SIZE];
     struct nlmsghdr *nlh;
     struct rtmsg *rt;
+
+    memset(buf, 0, MNL_SOCKET_BUFFER_SIZE);
 
     nlh = mnl_nlmsg_put_header(buf);
     nlh->nlmsg_type = msg_type;
@@ -55,12 +58,22 @@ static int32_t multi_link_modify_rule(uint32_t msg_type, uint32_t flags,
     rt->rtm_protocol = RTPROT_BOOT;
     rt->rtm_scope = RT_SCOPE_UNIVERSE;
     rt->rtm_type = RTN_UNICAST;
-    //Need the length of the src address that will be provided later on
-    rt->rtm_src_len = 32; 
-    mnl_attr_put_u32(nlh, FRA_SRC, li->cfg.address.s_addr);
+    
+    mnl_attr_put_u32(nlh, FRA_PRIORITY, prio);
+
+    if (dir == FRA_SRC)
+        rt->rtm_src_len = addr_len;
+    else if (dir == FRA_DST)
+        rt->rtm_dst_len = addr_len;
+
+    if (rt->rtm_src_len || rt->rtm_dst_len)
+        mnl_attr_put_u32(nlh, dir, li->cfg.address.s_addr);
+
+    if (ifname)
+        mnl_attr_put_strz(nlh, FRA_IFNAME, ifname);
 
     if(mnl_socket_sendto(multi_link_nl_set, nlh, nlh->nlmsg_len) < 0){
-        MULTI_DEBUG_PRINT(stderr,"Could not send gateway to kernel "
+        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Could not send rule to kernel "
                 "(can be ignored if caused by an interface that went down, "
                 "iface idx %u)\n", li->ifi_idx);
         return -1;
@@ -107,7 +120,7 @@ static int32_t multi_link_modify_gateway(uint32_t msg_type, uint32_t flags,
         mnl_attr_put_u32(nlh, RTA_PRIORITY, metric);
 
     if(mnl_socket_sendto(multi_link_nl_set, nlh, nlh->nlmsg_len) < 0){
-        MULTI_DEBUG_PRINT(stderr,"Could not send gateway to kernel "
+        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Could not send gateway to kernel "
                 "(can be ignored if caused by an interface that went down, "
                 "iface idx %u)\n", li->ifi_idx);
         return -1;
@@ -159,7 +172,7 @@ static int32_t multi_link_modify_route(uint32_t msg_type, uint32_t flags,
         mnl_attr_put_u32(nlh, RTA_PRIORITY, metric);
 
     if(mnl_socket_sendto(multi_link_nl_set, nlh, nlh->nlmsg_len) < 0){
-        MULTI_DEBUG_PRINT(stderr,"Could not send private route to kernel "
+        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Could not send private route to kernel "
                 "(can be ignored if caused by an interface that went down, "
                 "iface idx %u)\n", li->ifi_idx);
         return -1;
@@ -187,7 +200,7 @@ static int32_t multi_link_modify_ip(uint32_t msg_type, uint32_t flags,
     ifa->ifa_family = AF_INET; //Currently only IPv4
 
     //To avoid this rule that is generated automatically, set bitlen to 32
-    ifa->ifa_prefixlen = 32 - (ffs(ntohl(li->cfg.netmask.s_addr)) - 1);     
+    ifa->ifa_prefixlen = 32 - (ffs(ntohl(li->cfg.netmask.s_addr)) - 1); 
     //Only reason for changing this is if loopback
     ifa->ifa_scope = RT_SCOPE_UNIVERSE; 
     ifa->ifa_index = li->ifi_idx;
@@ -199,7 +212,7 @@ static int32_t multi_link_modify_ip(uint32_t msg_type, uint32_t flags,
         mnl_attr_put_u32(nlh, IFA_BROADCAST, li->cfg.broadcast.s_addr);
 
     if(mnl_socket_sendto(multi_link_nl_set, nlh, nlh->nlmsg_len) < 0){
-        MULTI_DEBUG_PRINT(stderr,"Could not send IP to kernel (can be ignored "
+        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Could not send IP to kernel (can be ignored "
                 "if caused by an interface that went down, iface idx %u)\n", 
                 li->ifi_idx);
         return -1;
@@ -227,7 +240,7 @@ void multi_link_get_iface_info(struct multi_link_info *li){
     rt->rtgen_family = AF_UNSPEC; 
 
     if(mnl_socket_sendto(multi_link_nl_request, nlh, nlh->nlmsg_len) < 0){
-        MULTI_DEBUG_PRINT(stderr, "Cannot request info dump\n");
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Cannot request info dump\n");
         return;
     }
 
@@ -241,18 +254,18 @@ void multi_link_get_iface_info(struct multi_link_info *li){
 /* TODO: Add error codes! */
 void multi_link_remove_ppp(struct multi_link_info *li){
     if(!multi_link_modify_route(RTM_DELROUTE, 0, RT_TABLE_MAIN, li, 0)){
-        MULTI_DEBUG_PRINT(stderr, "Removed automatic PPP route!\n");
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Removed automatic PPP route!\n");
     } else{
-        MULTI_DEBUG_PRINT(stderr, "Failed to remove automatic PPP route!\n");
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Failed to remove automatic PPP route!\n");
         return;
     }
 }
 
 void multi_link_remove_ap(struct multi_link_info *li){
     if(!multi_link_modify_route(RTM_DELROUTE, 0, RT_TABLE_MAIN, li, 0)){
-        MULTI_DEBUG_PRINT(stderr, "Removed automatic AP route!\n");
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Removed automatic AP route!\n");
     } else{
-        MULTI_DEBUG_PRINT(stderr, "Failed to remove automatic AP route!\n");
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Failed to remove automatic AP route!\n");
         return;
     }
 }
@@ -272,42 +285,51 @@ void multi_link_configure_link(struct multi_link_info *li){
     /* Use metric as table ID for now */
     multi_link_modify_route(RTM_NEWROUTE, NLM_F_CREATE | NLM_F_APPEND, 
             li->metric, li, 0);
-    /*multi_link_modify_route(RTM_NEWROUTE, NLM_F_CREATE | NLM_F_APPEND, 
-            RT_TABLE_MAIN, li, li->metric);*/
-    MULTI_DEBUG_PRINT(stderr, "Done setting direct routes (iface %s idx %u)\n", 
+
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Done setting direct routes (iface %s idx %u)\n", 
             li->dev_name, li->ifi_idx); 
 
     if(li->state == GOT_IP_AP || (li->state == GOT_IP_STATIC && 
                 !li->cfg.gateway.s_addr)){
-        MULTI_DEBUG_PRINT(stderr, "Not setting gateway for %s (idx %u)\n", 
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Not setting gateway for %s (idx %u)\n", 
                 li->dev_name, li->ifi_idx); 
     } else {
         multi_link_modify_gateway(RTM_NEWROUTE, NLM_F_CREATE | NLM_F_APPEND, 
-                RT_TABLE_MAIN, li, li->metric);
-        multi_link_modify_gateway(RTM_NEWROUTE, NLM_F_CREATE | NLM_F_APPEND, 
-                li->metric, li, 0);
-        MULTI_DEBUG_PRINT(stderr, "Done setting routes in main table "
+            li->metric, li, 0);
+        //Delete the route that is automatically added by kernel when we add an
+        //address with mask < 32
+        multi_link_modify_route(RTM_DELROUTE, NLM_F_CREATE | NLM_F_APPEND, 
+            RT_TABLE_MAIN, li, 0);
+        MULTI_DEBUG_PRINT_SYSLOG(stderr, "Done setting routes in main table "
                 "(iface %s idx %u)\n", li->dev_name, li->ifi_idx);
     }
 
     multi_link_modify_rule(RTM_NEWRULE, NLM_F_CREATE | NLM_F_EXCL, li->metric, 
-            li);
-    MULTI_DEBUG_PRINT(stderr, "Done adding rule (iface %s idx %u)\n", 
+            li, 32, FRA_SRC, ADDR_RULE_PRIO, NULL);
+    multi_link_modify_rule(RTM_NEWRULE, NLM_F_CREATE | NLM_F_EXCL, li->metric, 
+            li, 32 - (ffs(ntohl(li->cfg.netmask.s_addr)) - 1), FRA_DST,
+            NW_RULE_PRIO, NULL);
+    multi_link_modify_rule(RTM_NEWRULE, NLM_F_CREATE | NLM_F_EXCL, li->metric, 
+            li, 0, 0, DEF_RULE_PRIO + li->ifi_idx, "lo");
+
+    MULTI_DEBUG_PRINT_SYSLOG(stderr, "Done adding rule (iface %s idx %u)\n", 
             li->dev_name, li->ifi_idx);
 }
 
 /* Maybe replace this with a command for flushing */
 void multi_link_remove_link(struct multi_link_info *li){
-    multi_link_modify_rule(RTM_DELRULE, 0, 0, li);
+    multi_link_modify_rule(RTM_DELRULE, 0, li->metric, li, 32, FRA_SRC,
+            ADDR_RULE_PRIO, NULL);
+    multi_link_modify_rule(RTM_DELRULE, 0, li->metric, 
+            li, 32 - (ffs(ntohl(li->cfg.netmask.s_addr)) - 1), FRA_DST,
+            NW_RULE_PRIO, NULL);
+    multi_link_modify_rule(RTM_DELRULE, NLM_F_CREATE | NLM_F_EXCL, li->metric, 
+            li, 0, 0, DEF_RULE_PRIO + li->ifi_idx, "lo");
 
     /* This seems to be done by the kernel, but does it depend on something or not? Maybe have a check here */
     if(li->state != GOT_IP_AP)
         multi_link_modify_gateway(RTM_DELROUTE, 0, li->metric, li, 0);
     
-    multi_link_modify_gateway(RTM_DELROUTE, 0, RT_TABLE_MAIN, li, 
-                li->metric);
-    
-    //multi_link_modify_route(RTM_DELROUTE, 0, RT_TABLE_MAIN, li, li->metric);
     multi_link_modify_route(RTM_DELROUTE, 0, li->metric, li, 0);
 
     /* Delete IP address */
@@ -316,6 +338,6 @@ void multi_link_remove_link(struct multi_link_info *li){
             li->state != LINK_UP_STATIC)
         multi_link_modify_ip(RTM_DELADDR, 0, li);
 
-    MULTI_DEBUG_PRINT(stderr, "Cleaned up after %s (iface idx %u)\n", 
+    MULTI_DEBUG_PRINT_SYSLOG(stderr, "Cleaned up after %s (iface idx %u)\n", 
             li->dev_name, li->ifi_idx);
 }
