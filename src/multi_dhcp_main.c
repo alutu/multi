@@ -222,7 +222,7 @@ static void multi_dhcp_cleanup(void *arg){
 	if(di->udp_sock > 0)
 	    close(di->udp_sock);
 
-    MULTI_DEBUG_PRINT_SYSLOG(stderr,"Finished DHCP cleanup for interface with index" 
+    MULTI_DEBUG_PRINT_SYSLOG(stderr,"Finished DHCP cleanup for interface with index " 
             "%u. Sent RELEASE and closed sockets %u and %u.\n", di->ifidx, 
             di->raw_sock, di->udp_sock);
 }
@@ -252,10 +252,14 @@ void* multi_dhcp_main(void *arg){
     di.output_timer = 0;
     
     if((di.raw_sock = multi_dhcp_create_raw_socket(li, &di)) == -1){
+        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Failed to create raw socket for %s\n",
+                li->dev_name);
         return;
     }
 
     if((di.udp_sock = multi_dhcp_create_udp_socket(li)) == -1){
+        MULTI_DEBUG_PRINT_SYSLOG(stderr,"Failed to create UDP socket for %s\n",
+                li->dev_name);
         return;
     }
    
